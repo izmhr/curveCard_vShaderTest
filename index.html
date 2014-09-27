@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <title>カードを曲げる</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+  <link rel=stylesheet href="../css/base.css"/>
+</head>
+<body>
+
+  <script src="lib/three.min.js"></script>
+  <script src="lib/Detector.js"></script>
+  <script src="lib/stats.min.js"></script>
+  <script src="lib/OrbitControls.js"></script>
+  <script src="lib/THREEx.KeyboardState.js"></script>
+  <script src="lib/THREEx.FullScreen.js"></script>
+  <script src="lib/THREEx.WindowResize.js"></script>
+
+  <div id="ThreeJS" style="position: absolute; left:0px; top:0px"></div>
+
+  <script id="vertexShaderSimple" type="x-shader/x-vertex">
+  varying vec2 vUv;
+  void main()
+  {
+    vUv = uv;
+    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+    gl_Position = projectionMatrix * mvPosition;
+  }
+</script>
+
+<!-- <script id="vertexShaderCurve" type="x-shader/x-vertex">
+  // simple curve transform around Y-axis
+  varying vec2 vUv;
+  uniform float curlR;
+  void main()
+  {
+    vUv = uv;
+
+    float theta = position.x / curlR;
+    float tx = curlR * sin(theta);
+    float ty = position.y;
+    float tz = curlR * (1.0 - cos(theta));
+    vec3 p = vec3(tx, ty, tz);
+
+    vec4 mvPosition = modelViewMatrix * vec4(p, 1.0);
+    gl_Position = projectionMatrix * mvPosition;
+  }
+</script> -->
+
+<script id="vertexShader" type="x-shader/x-vertex">
+  varying vec2 vUv;
+  uniform float rotZ;
+  uniform float curlR;
+
+  // const mat2 deformUV = mat2(1.0, 0.0, 0.0, 2.0);
+
+  // GLSL Rotation About An Arbitrary Axis
+  // http://www.neilmendoza.com/glsl-rotation-about-an-arbitrary-axis/
+  mat4 rotationMatrix(vec3 axis, float angle)
+  {
+    axis = normalize(axis);
+    float s = sin(angle);
+    float c = cos(angle);
+    float oc = 1.0 - c;
+    
+    return mat4(oc * axis.x * axis.x + c, oc * axis.x * axis.y - axis.z * s,  oc * axis.z * axis.x + axis.y * s,  0.0,
+      oc * axis.x * axis.y + axis.z * s,  oc * axis.y * axis.y + c,           oc * axis.y * axis.z - axis.x * s,  0.0,
+      oc * axis.z * axis.x - axis.y * s,  oc * axis.y * axis.z + axis.x * s,  oc * axis.z * axis.z + c,           0.0,
+      0.0,                                0.0,                                0.0,                                1.0);
+  }
+
+  void main()
+  {
+    // vUv = deformUV * uv;
+    vUv = uv;
+    vec4 transp = rotationMatrix(vec3(0, 0, 1), rotZ) * vec4(position, 1.0);
+    float theta = transp.x / curlR;
+    float tx = curlR * sin(theta);
+    float ty = transp.y;
+    float tz = curlR * (1.0 - cos(theta));
+    vec3 p = vec3(tx, ty, tz);
+    vec4 backedp = rotationMatrix(vec3(0, 0, 1), -rotZ) * vec4(p, 1.0);
+    vec4 mvPosition = modelViewMatrix * backedp;
+    gl_Position = projectionMatrix * mvPosition;
+  }
+</script>
+
+<script id="fragmentShader" type="x-shader/x-fragment">
+  uniform sampler2D texture;
+  varying vec2 vUv;
+
+  void main()
+  {
+    gl_FragColor = texture2D(texture, vUv);
+  }
+</script>
+
+<script>
+/*
+  Three.js "tutorials by example"
+  Author: Lee Stemkoski
+  Date: July 2013 (three.js v59dev)
+  */
+
+/*
+  Vertex Shader の勉強のために改変
+  Autho: AMANE @izmhrats
+  Date: Sep 2014
+*/
+
+// MAIN
+
+// standard global variables
+var container, scene, camera, renderer, controls, stats;
+var keyboard = new THREEx.KeyboardState();
+var clock = new THREE.Clock();
+
+var card, curveCard;
+var myShaderUniforms;
+
+init();
+clock.start();
+animate();
+
+// FUNCTIONS    
+function init() 
+{
+  // SCENE
+  scene = new THREE.Scene();
+  // CAMERA
+  var SCREEN_WIDTH = window.innerWidth, SCREEN_HEIGHT = window.innerHeight;
+  var VIEW_ANGLE = 45, ASPECT = SCREEN_WIDTH / SCREEN_HEIGHT, NEAR = 0.1, FAR = 20000;
+  camera = new THREE.PerspectiveCamera( VIEW_ANGLE, ASPECT, NEAR, FAR);
+  scene.add(camera);
+  camera.position.set(0,150,400);
+  camera.lookAt(scene.position);  
+  // RENDERER
+  if ( Detector.webgl )
+    renderer = new THREE.WebGLRenderer( {antialias:true} );
+  else
+    renderer = new THREE.CanvasRenderer(); 
+  renderer.setSize(SCREEN_WIDTH, SCREEN_HEIGHT);
+  container = document.getElementById( 'ThreeJS' );
+  container.appendChild( renderer.domElement );
+  // EVENTS
+  THREEx.WindowResize(renderer, camera);
+  THREEx.FullScreen.bindKey({ charCode : 'm'.charCodeAt(0) });
+  // CONTROLS
+  controls = new THREE.OrbitControls( camera, renderer.domElement );
+  // STATS
+  stats = new Stats();
+  stats.domElement.style.position = 'absolute';
+  stats.domElement.style.bottom = '0px';
+  stats.domElement.style.zIndex = 100;
+  container.appendChild( stats.domElement );
+  // LIGHT
+  var light = new THREE.PointLight(0xffffff);
+  light.position.set(0,150,100);
+  scene.add(light);
+
+  // Spheres
+  //   Note: a standard flat rectangular image will look distorted,
+  //   a "spherical projection" image will look "normal".
+  
+  // radius, segmentsWidth, segmentsHeight
+  var sphereGeom =  new THREE.SphereGeometry( 40, 32, 16 ); 
+  
+  var light2 = new THREE.AmbientLight(0x444444);
+  scene.add(light2);
+  
+  // basic moon
+  var moonTexture = THREE.ImageUtils.loadTexture( 'images/moon.jpg' );
+  var moonMaterial = new THREE.MeshBasicMaterial( { map: moonTexture } );
+  var moon = new THREE.Mesh( sphereGeom.clone(), moonMaterial );
+  moon.position.set(-100, 50, -100);
+  scene.add( moon );  
+  
+  // shaded moon -- side away from light picks up AmbientLight's color.
+  var moonTexture = THREE.ImageUtils.loadTexture( 'images/moon.jpg' );
+  var moonMaterial = new THREE.MeshLambertMaterial( { map: moonTexture } );
+  var moon = new THREE.Mesh( sphereGeom.clone(), moonMaterial );
+  moon.position.set(0, 50, -100);
+  scene.add( moon );    
+  
+  // colored moon
+  var moonTexture = THREE.ImageUtils.loadTexture( 'images/moon.jpg' );
+  var moonMaterial = new THREE.MeshLambertMaterial( { map: moonTexture, color: 0xff8800, ambient: 0x0000ff } );
+  var moon = new THREE.Mesh( sphereGeom.clone(), moonMaterial );
+  moon.position.set(100, 50, -100);
+  scene.add( moon );  
+  
+  // card
+  var cardTexture = THREE.ImageUtils.loadTexture('images/card.png');
+  var cardGeometry = new THREE.PlaneGeometry(160, 256, 20, 32);
+
+  // THREE.MeshBasicMaterial を使う
+  // var cardMaterial = new THREE.MeshBasicMaterial({map: cardTexture});
+  // cardMaterial.side = THREE.DoubleSide;
+  // cardMaterial.transparent = true;
+  // cardMaterial.blending = THREE.NormalBlending;
+  // card = new THREE.Mesh(cardGeometry, cardMaterial);
+
+  //-------- シンプルな何もしないシェーダ -------- 
+  var carMaterialShaderSimple = new THREE.ShaderMaterial({
+    vertexShader: document.getElementById('vertexShaderSimple').textContent,
+    fragmentShader: document.getElementById('fragmentShader').textContent,
+    uniforms: {
+      texture: { type: 't', value: cardTexture}
+    }
+  });
+  carMaterialShaderSimple.side = THREE.DoubleSide;
+  carMaterialShaderSimple.transparent = true;
+  carMaterialShaderSimple.blending = THREE.NormalBlending;
+  card = new THREE.Mesh(cardGeometry, carMaterialShaderSimple);
+
+  //--------  曲げるシェーダ (y軸周り) -------- 
+  // var carMaterialShaderCurve = new THREE.ShaderMaterial({
+  //   vertexShader: document.getElementById('vertexShaderCurve').textContent,
+  //   fragmentShader: document.getElementById('fragmentShader').textContent,
+  //   uniforms: {
+  //     curlR: { type: 'f', value: 100.0},
+  //     texture: { type: 't', value: cardTexture}
+  //   }
+  // });
+
+  //--------  曲げるシェーダ2 (軸を傾ける) -------- 
+  // var carMaterialShaderCurve = new THREE.ShaderMaterial({
+  //   vertexShader: document.getElementById('vertexShader').textContent,
+  //   fragmentShader: document.getElementById('fragmentShader').textContent,
+  //   uniforms: {
+  //     rotZ: { type: 'f', value: Math.PI / 6}, // 30deg
+  //     curlR: { type: 'f', value: 100.0},
+  //     texture: { type: 't', value: cardTexture}
+  //   }
+  // });
+
+  // carMaterialShaderCurve.side = THREE.DoubleSide;
+  // carMaterialShaderCurve.transparent = true;
+  // carMaterialShaderCurve.blending = THREE.NormalBlending;
+  // card = new THREE.Mesh(cardGeometry, carMaterialShaderCurve);
+
+  card.position.set(0, 0, -5);
+  scene.add(card);
+
+  //-------- 曲げるアニメーションをするシェーダ -------- 
+  myShaderUniforms = {
+    curlR: { type: 'f', value: 0.0},
+    rotZ: {type: 'f', value: Math.PI / 6.0},
+    texture: { type: 't', value: cardTexture}
+  };
+  var curveCardMaterial = new THREE.ShaderMaterial({
+    vertexShader: document.getElementById('vertexShader').textContent,
+    fragmentShader: document.getElementById('fragmentShader').textContent,
+    uniforms: myShaderUniforms
+  });
+  curveCardMaterial.side = THREE.DoubleSide;
+  curveCardMaterial.transparent = true;
+  curveCardMaterial.blending = THREE.NormalBlending;
+  curveCard = new THREE.Mesh(cardGeometry, curveCardMaterial);
+  scene.add( curveCard );
+}
+
+function animate() 
+{
+  update();
+  render();   
+  requestAnimationFrame( animate );
+}
+
+function update()
+{
+  if ( keyboard.pressed("z") ) 
+  { 
+    // do something
+  }
+
+  // card curving animatino
+  var _curlR = 200.0 + 150.0 * Math.sin(clock.getElapsedTime() * 2.0);
+  myShaderUniforms.curlR.value = _curlR;
+  
+  controls.update();
+  stats.update();
+}
+
+function render() 
+{
+  renderer.render( scene, camera );
+}
+
+</script>
+
+</body>
+</html>
