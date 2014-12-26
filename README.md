@@ -6,9 +6,9 @@ This Three.js project is for studying Transforming mesh using vertex shader.
 
 I wrote an article about this project. There is further description about this.
 
-[]
+[Three.js の VertexShader でカードをうにょんと曲げる](http://izmiz.hateblo.jp/entry/2014/09/27/235743)
 
-### Hou to use
+### How to use
 
 ```sh
 $ node httpServer.js
